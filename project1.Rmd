@@ -1,0 +1,242 @@
+---
+title: "Project for Practical Machine Learning"
+output: html_document
+---
+**INTRODUCTION and SUMMARY:**
+
+I'll follow the steps outlined in lecture 1-2.  In particular this report is roughly organized along the steps:
+
+1.  Question
+2.  Input Data
+3.  Features
+4.  Algorithm
+5.  Parameters
+6.  Evaluation
+
+The question is to estimate the "classe" classification, given the other input data.  The input data was given, but had to be cleaned up - 2 sample outliers (they were "way out") were removed.  The selected features were just the variables that were NOT mostly blank.  I started with the Random Forest algorithm.   Although it turned out not to be necessary (the first model worked well enough), the methodology was followed, and two different parameter settings for the Random Forest algorithm were considered.  The data was split 3 ways into training, validation and test sets, where the training data was used to create the model, the validation data was used to select between to two different parameter settings, and the test data was used as a final sanity check.
+
+Then the resulting model was used to predict the supplied test set, those predictions were submitted to the grading program. 
+
+
+**INPUT DATA:**
+
+First set up the environment
+
+```{r Setup}
+setwd("c:/home/willy/coursera/practicalml/project")
+library(caret)
+library(randomForest)
+set.seed(440)
+```
+
+Next, get the data into the system -
+
+```{r Get the data}
+pmltraining = read.csv("pml-training.csv")
+```
+
+and find that there are `r ncol(pmltraining)` variables (including classe) and `r nrow(pmltraining)` samples.
+
+First check to see if the data is reasonable.  Using Excel to view the data in a spreadsheet format reveals much of the structure (or lack of structure).  I found the plotting Excel to be marginally faster than doing qplots.  In any case, each variable was plotted just to see how good the data was. I found that samples 5374 and 9275 were outliers in that the values they had seemed to be very different relative to their neighbors.  You can see this in R by plotting the affected variables
+
+```{r First two qplots, fig.height=2, fig.width=4}
+qplot(X,gyros_dumbbell_x,data=pmltraining)
+qplot(X,magnet_dumbbell_y,data=pmltraining)
+```
+
+It is important to point out that just about all the variables looked like the two plotted above, in that there was no discernable "blockyness" in the values - that is the clustering of the variable values, for a given value of classe, which would form a "block" on the plot.  The blockyness would show up, since the classe variables are ordered with like values adjacent to each other.  If this "blockyness" had shown up, I could have tried a model that only included the blocky variables.  Alas, no blockiness, so I have to consider all these variables. 
+
+The outlier samples were eliminated using the following command
+
+```{r Define pmltrainingclean}
+pmltrainingclean <- pmltraining[-c(5373,9274),]
+```
+
+and replotted to make sure it was done right.
+
+```{r Second two qplots, fig.height=2, fig.width=4}
+qplot(X,gyros_dumbbell_x,data=pmltrainingclean)
+qplot(X,magnet_dumbbell_y,data=pmltrainingclean)
+```
+
+
+**FEATURE SELECTION:**
+
+Feature selection in this case involved no preprocessing, only selecting the variables that had mostly good values.
+
+Doing a "names(pmltrainingclean)" Gives a response (truncated here):
+
+  [1] "X"                        "user_name"               
+  [3] "raw_timestamp_part_1"     "raw_timestamp_part_2"    
+  [5] "cvtd_timestamp"           "new_window"              
+  [7] "num_window"               "roll_belt"               
+  [9] "pitch_belt"               "yaw_belt"                
+ [11] "total_accel_belt"         "kurtosis_roll_belt"      
+
+From this it is clear I need to make a stripped training set, which doesn't have variables 1-7 in it, which shouldn't be related to what we are trying to predict.  This is done with the following code...
+
+```{r Exclude first 7 columns}
+exclunames <- names(pmltrainingclean) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+pmltrainexclu <- pmltrainingclean[!exclunames]
+```
+
+Running the command "names" verifies that those variables have been removed from the pmltrainexclu data.  Also, note that the number of variables in the training set is 153 (160 - 7).
+
+Next I look at the remaining data, and find that there are alot of NA values.  In particular, with the following code I determined that there are 67 variables with more than 15000 NA's in the column!  These variables were defined only when the "new window" variable was yes, and didn't seem to have any relationship to the classe variable (nor does "new window"=yes show up in the assignement test set!).  I did plot a few of these variables in hopes that they would have values that would directly determine the classe variable, but this was not the case, from an example plot below - I was looking for the "blockyness" that I describe above, none was found.
+
+```{r Last qplot of eliminated an var, fig.height=2, fig.width=4}
+qplot(,avg_pitch_belt,data=pmltrainingclean)
+```
+
+
+```{r Count number of NAs}
+count = 0
+pmltrainexclunames <- names(pmltrainexclu)
+for (i in 1:length(pmltrainexclunames) ) {
+if (sum(is.na(pmltrainexclu[ which(colnames(pmltrainexclu) == pmltrainexclunames[i])])) > 15000)  {count = count + 1}
+}
+cat("Total number of columns with NA in more than 15000 samples is ",count)
+```
+
+Looking at the raw .csv data file, there are also many "" entries as well, that carry no value...so these are recoded to NA
+
+```{r Replace blanks with NAs}
+pmltrainexclu1 = pmltrainexclu
+for (i in 1:length(pmltrainexclunames) ) {
+pmltrainexclu1[which(colnames(pmltrainexclu) == pmltrainexclunames[i])] [pmltrainexclu[which(colnames(pmltrainexclu) == pmltrainexclunames[i])] == ""] <- NA
+}
+```
+
+Then find them again...
+
+```{r Count of NAs and blanks}
+count = 0
+for (i in 1:length(pmltrainexclunames) ) {
+if (sum(is.na(pmltrainexclu1[ which(colnames(pmltrainexclu1) == pmltrainexclunames[i])])) > 15000)  {count= count + 1}
+}
+cat(" Total number of columns containing > 15000 blank or NA values is ", count)
+```
+
+with all of these converted, I have 100 columns of possible junk.  So these columns are eliminated.
+
+```{r Cut all of the NAs and blanks}
+pmltrainexclu2 = pmltrainexclu1
+for (i in 1:length(pmltrainexclunames) ) {
+if (sum(is.na(pmltrainexclu1[ which(colnames(pmltrainexclu1) == pmltrainexclunames[i])])) > 15000)  {
+exclunamestemp <- names(pmltrainexclu2) %in% pmltrainexclunames[i]
+pmltrainexclu2 <- pmltrainexclu2[!exclunamestemp] }
+}
+```
+
+Doing a "names" on pmltrainexclu2 gives us 53 variables (including the classe variable).
+
+```{r Names of final data used for training/validation}
+names(pmltrainexclu2)
+```
+
+
+**ALGORITHM and PARAMETERS:**
+
+Next, I examine the training variable to be predicted - "classe"
+
+```{r Summary of classe}
+summary(pmltrainexclu2$classe)
+```
+
+It is distributed fairly evenly.
+
+Since I may have to try different models to get to a final one, I need to divide the given training data up into three sets - a training, validataion and test set.  The test set will only be used once at the end, to make sure I am not doing something stupid.
+
+For validation & test, this training set will be have to split into a training (60%) validation (20%) and test (20%) set, so I can tune my design on the validation set, and then run a final test on the test set.
+
+
+```{r Partitioning of training set into train/valid}
+inTrain <- createDataPartition(pmltrainexclu2$classe,p=0.6,list=FALSE)
+pmltrain <- pmltrainexclu2[inTrain,]
+pmlvt <- pmltrainexclu2[-inTrain,]
+inValid <- createDataPartition(pmlvt$classe,p=0.5,list=FALSE)
+pmlvalid <- pmlvt[inValid,]
+pmltest <- pmlvt[-inValid,]
+```
+
+I made a pmltrain and a pmlvalid dataset from the pmltrainexclu2 dataset, with the split being made by taking 80% of each "classe" value into the pmltrain set (and 20% into the pmlvalid set).  As a check on this partition, the "summary" command in R shows that for classe=A we have `r summary(pmltrain$classe)[1]` in the training set, `r summary(pmlvalid$classe)[1]` in the validation set, and `r summary(pmltest$classe)[1]` in the test set.
+
+Now I am ready to try my first model.  I pick Random Forest because of lecture 3-3 where it is praised for its accuracy.  Given that there is no obvious trend or relationship between the data and the classe variable, we need all the accuracy we can get!  I make sure I've got lots of memory available... 52 variables should fit... but following the advice of the forums I will not use the "train" function in caret, instead, I will just use the "randomForest" call directly.
+
+```{r First model, randomForest}
+modFitset1 <- randomForest(pmltrain$classe ~ ., data=pmltrain)
+```
+
+Then I want to assess performance with the validation set with
+
+```{r First model validation predictions}
+validset1pred <- predict(modFitset1, pmlvalid)
+validset1right <- validset1pred == pmlvalid$classe
+table(validset1right)
+```
+
+A confusion matrix listing gives the following:
+
+```{r First model confusion matrix}
+confusionMatrix(data=pmlvalid$classe, validset1pred)
+```
+
+This confusion matrix output tells us that the classifier is pretty good.  The out of sample error is minimal, at 99.5%+ accuracy its going to do as well as I could expect on the real test values. That error rate also is verified by the ratio of "trues" in the validset1right vector shown above.
+
+To adhere to the "prediction methodology" of week 1's lectures, I should at least try some other model, just so I can justify the effort of creating the pmltest data set.  So, a second model was created by randomForest with ntrees=1500: 
+
+```{r Second model randomForest with ntrees changed}
+modFitset2 <- randomForest(pmltrain$classe ~ ., data=pmltrain, ntrees=1500)
+```
+
+which gave marginally better results, as shown by the confusion matrix.  
+
+```{r Second model validation and confusion matrix}
+validset2pred <- predict(modFitset2, pmlvalid)
+validset2right <- validset2pred == pmlvalid$classe
+table(validset2right)
+confusionMatrix(data=pmlvalid$classe, validset2pred)
+```
+
+
+**EVALUATION:**
+
+The best performance was with model #2, so I use it to predict the pmltest set that we created and get a final sanity check on the model that I'm going to use for the assignment test cases.
+
+```{r Selected model test and confusion matrix}
+testpred <- predict(modFitset2, pmltest)
+testright <- testpred == pmltest$classe
+table(testright)
+confusionMatrix(data=pmltest$classe, testpred)
+
+```
+
+This gives similar results to the validation case, namely that the out of sample error will be around 99.5% which should get us a perfect score on a sample of 20 (the number of assignment test cases).  The testright table verifies this as well.
+
+Finally, to predict the assignment test case values, I do the following:
+
+```{r Predict the test values}
+pmltesting = read.csv("pml-testing.csv")
+testing2pred <- predict(modFitset2, pmltesting)
+testing2pred
+```
+
+which finds the values for the test set, that are to be submitted.  The answers were dumped using the provided function...
+
+```{r Answer file generator function}
+pml_write_files = function(x) {
+    n = length(x)
+    for(i in 1:n) {
+      filename = paste0("problem_id_",i,".txt")
+      write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+```
+
+by calling it with the predictor output
+
+```{r Dump of answers}
+pml_write_files(testing2pred)
+```
+
+the submissions we all correct.
