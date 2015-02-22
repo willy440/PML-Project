@@ -145,7 +145,7 @@ summary(pmltrainexclu2$classe)
 
 It is distributed fairly evenly.
 
-Since I may have to try different models to get to a final one, I need to divide the given training data up into three sets - a training, validataion and test set.  The test set will only be used once at the end, to make sure I am not doing something stupid.
+Since I may have to try different models to get to a final one, I need to divide the given training data up into three sets - a training, validation and test set.  The test set will only be used once at the end, to make sure I am not doing something stupid.
 
 For validation & test, this training set will be have to split into a training (60%) validation (20%) and test (20%) set, so I can tune my design on the validation set, and then run a final test on the test set.
 
@@ -239,4 +239,4 @@ by calling it with the predictor output
 pml_write_files(testing2pred)
 ```
 
-the submissions we all correct.
+the submissions were all correct.
